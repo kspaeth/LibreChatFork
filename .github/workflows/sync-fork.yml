@@ -13,6 +13,6 @@ jobs:
       - name: Sync fork
         uses: tgymnich/fork-sync@v2.0
         with:
-          owner: ORIGINAL_OWNER
-          repo: ORIGINAL_REPO
+          owner: danny-avila
+          repo: LibreChat
           token: ${{ secrets.GITHUB_TOKEN }}
