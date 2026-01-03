@@ -263,7 +263,7 @@ jobs:
           fi
           
           # Update with lowercase repository owner
-          sed -i "s|image: ghcr.io/.*/librechat-api:dev-[a-zA-Z0-9.-]*|image: ghcr.io/$OWNER/librechat-api:dev-$SAFE_VERSION|g" "$FILE"
+          sed -i "s|image: ghcr.io/.*/librechat-api:dev[a-zA-Z0-9.-]*|image: ghcr.io/$OWNER/librechat-api:dev-$SAFE_VERSION|g" "$FILE"
           
           if ! grep -q "ghcr.io/$OWNER/librechat-api:dev-$SAFE_VERSION" "$FILE"; then
             echo "Error: Failed to update image version in $FILE"
