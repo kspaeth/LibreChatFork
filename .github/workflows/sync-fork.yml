@@ -5,14 +5,29 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Sync fork
-        uses: tgymnich/fork-sync@v2.0
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          owner: danny-avila
-          repo: LibreChat
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+      - name: Sync with upstream
+        run: |
+          git remote add upstream https://github.com/danny-avila/LibreChat.git
+          git fetch upstream
+          git checkout master
+          git merge upstream/master --no-edit
+          git push origin master
