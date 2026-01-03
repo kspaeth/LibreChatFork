@@ -11,18 +11,19 @@ on:
         default: ''
         type: string
 
-# Minimal permissions by default
+# Permissions at workflow level
 permissions:
   contents: read
+  packages: write
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
     
-    # Job-specific permissions only
+    # Job-specific permissions
     permissions:
-      contents: write  # For tagging only
-      packages: write  # For pushing to ghcr.io
+      contents: write
+      packages: write
       
     steps:
       - name: Checkout
@@ -30,31 +31,26 @@ jobs:
         with:
           fetch-depth: 0
           
-      # Input validation using environment variable (prevents script injection)
       - name: Validate version input
         if: github.event.inputs.version != ''
         env:
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          # Check length first
           if [[ ${#VERSION} -gt 64 ]]; then
             echo "Error: Version too long (max 64 characters)"
             exit 1
           fi
           
-          # Only allow alphanumeric, dashes, dots
           if [[ ! "$VERSION" =~ ^[a-zA-Z0-9.-]+$ ]]; then
             echo "Error: Invalid version format. Only alphanumeric, dots, and dashes allowed."
             exit 1
           fi
           
-          # Prevent path traversal
           if [[ "$VERSION" == *".."* ]]; then
             echo "Error: Version cannot contain .."
             exit 1
           fi
           
-          # Prevent multiple consecutive dots
           if [[ "$VERSION" =~ \.{2,} ]]; then
             echo "Error: Version cannot contain consecutive dots"
             exit 1
@@ -90,7 +86,6 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [ -n "$INPUT_VERSION" ]; then
-            # Sanitize even after validation (defense in depth)
             VERSION=$(echo "$INPUT_VERSION" | tr -cd '[:alnum:].-')
           else
             DATE=$(date +%Y%m%d)
@@ -98,7 +93,6 @@ jobs:
             VERSION="$DATE-$SHA"
           fi
           
-          # Final safety check
           if [ -z "$VERSION" ]; then
             echo "Error: Version is empty after sanitization"
             exit 1
@@ -120,7 +114,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}  # ← CHANGED
           password: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Build and push Docker image
@@ -135,8 +129,8 @@ jobs:
             NODE_MAX_OLD_SPACE_SIZE=6144
           push: true
           tags: |
-            ghcr.io/kspaeth/librechat-api:dev-${{ steps.version.outputs.version }}
-            ghcr.io/kspaeth/librechat-api:latest
+            ghcr.io/${{ github.repository_owner }}/librechat-api:dev-${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/librechat-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           
@@ -171,23 +165,19 @@ jobs:
             exit 1
           fi
           
-          # Backup
           cp "$FILE" "$FILE.backup"
           
-          # Sanitize VERSION (defense in depth)
-          SAFE_VERSION=$(echo "$VERSION" | tr -cd '[:alnum:].-')
+          SAFE_VERSION=$(echo "$VERSION" | tr -cd '[:alnum.].-')
           
           if [ -z "$SAFE_VERSION" ]; then
             echo "Error: Version is empty after sanitization"
             exit 1
           fi
           
-          # Update image reference globally (not hardcoded to line 5)
-          # This matches the full image reference pattern
-          sed -i "s|image: ghcr.io/kspaeth/librechat-api:dev-[a-zA-Z0-9.-]*|image: ghcr.io/kspaeth/librechat-api:dev-$SAFE_VERSION|g" "$FILE"
+          # Update with lowercase repository owner
+          sed -i "s|image: ghcr.io/.*/librechat-api:dev-[a-zA-Z0-9.-]*|image: ghcr.io/${{ github.repository_owner }}/librechat-api:dev-$SAFE_VERSION|g" "$FILE"
           
-          # Verify the change was made
-          if ! grep -q "ghcr.io/kspaeth/librechat-api:dev-$SAFE_VERSION" "$FILE"; then
+          if ! grep -q "ghcr.io/${{ github.repository_owner }}/librechat-api:dev-$SAFE_VERSION" "$FILE"; then
             echo "Error: Failed to update image version in $FILE"
             echo "File contents:"
             cat "$FILE"
@@ -196,7 +186,7 @@ jobs:
           
           echo "Updated to version: dev-$SAFE_VERSION"
           echo "Updated lines:"
-          grep "ghcr.io/kspaeth/librechat-api" "$FILE"
+          grep "ghcr.io/.*/librechat-api" "$FILE"
           
       - name: Commit and push deployment config
         if: steps.check.outputs.should_build == 'true'
@@ -210,9 +200,8 @@ jobs:
           git add docker-compose.override.yml
           
           if git diff --staged --quiet; then
-            echo "ℹ️ No changes to commit"
+            echo "No changes to commit"
           else
-            # Sanitize version for commit message (defense in depth)
             SAFE_VERSION=$(echo "$VERSION" | tr -cd '[:alnum:].-')
             git commit -m "Update librechat-api to version dev-$SAFE_VERSION"
             git push
