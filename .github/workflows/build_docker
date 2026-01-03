@@ -1,0 +1,220 @@
+name: Build Private Docker Image
+
+on:
+  schedule:
+    - cron: '0 2 */2 * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Manual version override (alphanumeric and dashes only)'
+        required: false
+        default: ''
+        type: string
+
+# Minimal permissions by default
+permissions:
+  contents: read
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    
+    # Job-specific permissions only
+    permissions:
+      contents: write  # For tagging only
+      packages: write  # For pushing to ghcr.io
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      # Input validation using environment variable (prevents script injection)
+      - name: Validate version input
+        if: github.event.inputs.version != ''
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          # Check length first
+          if [[ ${#VERSION} -gt 64 ]]; then
+            echo "Error: Version too long (max 64 characters)"
+            exit 1
+          fi
+          
+          # Only allow alphanumeric, dashes, dots
+          if [[ ! "$VERSION" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+            echo "Error: Invalid version format. Only alphanumeric, dots, and dashes allowed."
+            exit 1
+          fi
+          
+          # Prevent path traversal
+          if [[ "$VERSION" == *".."* ]]; then
+            echo "Error: Version cannot contain .."
+            exit 1
+          fi
+          
+          # Prevent multiple consecutive dots
+          if [[ "$VERSION" =~ \.{2,} ]]; then
+            echo "Error: Version cannot contain consecutive dots"
+            exit 1
+          fi
+          
+          echo "Version validation passed: $VERSION"
+          
+      - name: Check if build needed
+        id: check
+        run: |
+          LAST_BUILD_TAG=$(git tag -l "build-*" | sort -V | tail -n1 || echo "")
+          
+          if [ -z "$LAST_BUILD_TAG" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "No previous builds found"
+          else
+            LAST_BUILD_SHA=$(echo "$LAST_BUILD_TAG" | sed 's/build-//')
+            CURRENT_SHA=$(git rev-parse --short HEAD)
+            
+            if [ "$LAST_BUILD_SHA" = "$CURRENT_SHA" ]; then
+              echo "should_build=false" >> $GITHUB_OUTPUT
+              echo "No changes since last build"
+            else
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "Changes detected"
+            fi
+          fi
+          
+      - name: Generate version
+        if: steps.check.outputs.should_build == 'true'
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            # Sanitize even after validation (defense in depth)
+            VERSION=$(echo "$INPUT_VERSION" | tr -cd '[:alnum:].-')
+          else
+            DATE=$(date +%Y%m%d)
+            SHA=$(git rev-parse --short HEAD)
+            VERSION="$DATE-$SHA"
+          fi
+          
+          # Final safety check
+          if [ -z "$VERSION" ]; then
+            echo "Error: Version is empty after sanitization"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: dev-$VERSION"
+          
+      - name: Set up QEMU
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Log in to GitHub Container Registry
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Build and push Docker image
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.multi
+          platforms: linux/amd64,linux/arm64
+          target: api-build
+          build-args: |
+            NODE_MAX_OLD_SPACE_SIZE=6144
+          push: true
+          tags: |
+            ghcr.io/kspaeth/librechat-api:dev-${{ steps.version.outputs.version }}
+            ghcr.io/kspaeth/librechat-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Tag this build
+        if: steps.check.outputs.should_build == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          SHA=$(git rev-parse --short HEAD)
+          git tag "build-$SHA"
+          git push origin "build-$SHA"
+          
+      - name: Checkout deployment repo
+        if: steps.check.outputs.should_build == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: kspaeth/kommpass-dev
+          token: ${{ secrets.KOMMPASS_PAT }}
+          path: kommpass-dev
+          
+      - name: Update docker-compose.override.yml
+        if: steps.check.outputs.should_build == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        working-directory: kommpass-dev
+        run: |
+          FILE="docker-compose.override.yml"
+          
+          if [ ! -f "$FILE" ]; then
+            echo "Error: $FILE not found"
+            exit 1
+          fi
+          
+          # Backup
+          cp "$FILE" "$FILE.backup"
+          
+          # Sanitize VERSION (defense in depth)
+          SAFE_VERSION=$(echo "$VERSION" | tr -cd '[:alnum:].-')
+          
+          if [ -z "$SAFE_VERSION" ]; then
+            echo "Error: Version is empty after sanitization"
+            exit 1
+          fi
+          
+          # Update image reference globally (not hardcoded to line 5)
+          # This matches the full image reference pattern
+          sed -i "s|image: ghcr.io/kspaeth/librechat-api:dev-[a-zA-Z0-9.-]*|image: ghcr.io/kspaeth/librechat-api:dev-$SAFE_VERSION|g" "$FILE"
+          
+          # Verify the change was made
+          if ! grep -q "ghcr.io/kspaeth/librechat-api:dev-$SAFE_VERSION" "$FILE"; then
+            echo "Error: Failed to update image version in $FILE"
+            echo "File contents:"
+            cat "$FILE"
+            exit 1
+          fi
+          
+          echo "Updated to version: dev-$SAFE_VERSION"
+          echo "Updated lines:"
+          grep "ghcr.io/kspaeth/librechat-api" "$FILE"
+          
+      - name: Commit and push deployment config
+        if: steps.check.outputs.should_build == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        working-directory: kommpass-dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add docker-compose.override.yml
+          
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+          else
+            # Sanitize version for commit message (defense in depth)
+            SAFE_VERSION=$(echo "$VERSION" | tr -cd '[:alnum:].-')
+            git commit -m "Update librechat-api to version dev-$SAFE_VERSION"
+            git push
+            echo "Successfully pushed deployment config update"
+          fi
