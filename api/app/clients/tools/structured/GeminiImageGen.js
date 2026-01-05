@@ -87,13 +87,13 @@ async function convertImageFormat(inputBuffer, targetFormat) {
  */
 async function initializeGeminiClient(options = {}) {
   const geminiKey = options.GEMINI_API_KEY;
-  if (geminiKey) {
+  if (geminiKey && typeof geminiKey === 'string' && geminiKey.trim().length > 0) {
     logger.debug('[GeminiImageGen] Using Gemini API with GEMINI_API_KEY');
     return new GoogleGenAI({ apiKey: geminiKey });
   }
 
   const googleKey = options.GOOGLE_KEY;
-  if (googleKey) {
+  if (googleKey && typeof googleKey === 'string' && googleKey.trim().length > 0) {
     logger.debug('[GeminiImageGen] Using Gemini API with GOOGLE_KEY');
     return new GoogleGenAI({ apiKey: googleKey });
   }
