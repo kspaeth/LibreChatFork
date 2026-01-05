@@ -112,31 +112,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-          - platform: linux/arm64
-            runner: macos-latest  # M1/M2 chip for native ARM64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
-      - name: Set up Docker (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          # Install Docker on macOS
-          brew install docker docker-buildx
-          # Start colima (lightweight Docker runtime for macOS)
-          brew install colima
-          colima start --cpu 3 --memory 6 --disk 60
-          
-          # Verify Docker is working
-          docker version
-          docker info
         
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -160,13 +139,13 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.multi
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64
           target: api-build
           build-args: |
             NODE_MAX_OLD_SPACE_SIZE=6144
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=build-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=build-${{ matrix.platform }}
+          cache-from: type=gha,scope=build-amd64
+          cache-to: type=gha,mode=max,scope=build-amd64
           outputs: type=image,name=ghcr.io/${{ needs.check-and-build.outputs.owner }}/librechat-api,push-by-digest=true,name-canonical=true,push=true
           
       - name: Export digest
@@ -178,7 +157,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ strategy.job-index }}
+          name: digests
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -199,7 +178,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests
           merge-multiple: true
           
       - name: Set up Docker Buildx
