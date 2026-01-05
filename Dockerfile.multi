@@ -58,6 +58,7 @@ RUN npm run build
 
 # Client build
 FROM base AS client-build
+ARG NODE_MAX_OLD_SPACE_SIZE=6144
 WORKDIR /app/client
 COPY client ./
 COPY --from=data-provider-build /app/packages/data-provider/dist /app/packages/data-provider/dist
