@@ -32,7 +32,10 @@ function getDefaultServiceKeyPath() {
 }
 
 const displayMessage =
-  "Gemini displayed an image. All generated images are already plainly visible, so don't repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.";
+  "SUCCESS: Image generation complete. The image is now displayed to the user. " +
+  "DO NOT call this tool again unless the user explicitly requests another/different image. " +
+  "All generated images are already plainly visible, so don't repeat the descriptions in detail. " +
+  "Do not list download links as they are available in the UI already.";
 
 /**
  * Replaces unwanted characters from the input string
