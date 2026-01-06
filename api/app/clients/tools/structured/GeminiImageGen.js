@@ -545,6 +545,7 @@ function createGeminiImageTool(fields = {}) {
         {
           type: ContentTypes.TEXT,
           text:
+            `[TOOL COMPLETE] Image successfully generated and displayed.\n\n` +
             displayMessage +
             `\n\ngenerated_image_id: "${file_ids[0]}"` +
             (image_ids?.length > 0 ? `\nreferenced_image_ids: ["${image_ids.join('", "')}"]` : ''),
