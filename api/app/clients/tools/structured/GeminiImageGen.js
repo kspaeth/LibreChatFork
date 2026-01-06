@@ -124,6 +124,9 @@ async function initializeGeminiClient(options = {}) {
     vertexai: true,
     project: serviceKey.project_id,
     location: process.env.GOOGLE_LOC || process.env.GOOGLE_CLOUD_LOCATION || 'global',
+    googleAuthOptions: {
+      credentials: serviceKey,
+    },
   });
 }
 
