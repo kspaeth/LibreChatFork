@@ -35,12 +35,15 @@ const mockMutate = jest.fn((vars: MutationVars) => {
   mockMutationHandlers.onMutate?.(vars);
 });
 
+// `loader` must be part of the mock: ArtifactCodeEditor calls loader.config() at module scope to
+// point Monaco at our self-hosted /monaco/vs, which would throw against a mock that omits it.
 jest.mock('@monaco-editor/react', () => ({
   __esModule: true,
   default: (props: MonacoEditorProps) => {
     Object.assign(mockEditorProps, props);
     return null;
   },
+  loader: { config: jest.fn() },
 }));
 
 jest.mock('~/Providers/EditorContext', () => {
