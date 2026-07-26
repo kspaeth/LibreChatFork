@@ -87,6 +87,26 @@ COPY --from=client-package-build /app/packages/client/tailwind.preset.cjs /app/p
 ARG NODE_MAX_OLD_SPACE_SIZE
 ENV NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"
 RUN npm run build
+# Self-host the Monaco code editor. @monaco-editor/loader would otherwise pull it from
+# cdn.jsdelivr.net at runtime, which our CSP (script-src 'self') refuses, leaving the artifact
+# code view dead; the client points paths.vs at /monaco/vs to match — see the loader.config()
+# comment in client/src/components/Artifacts/ArtifactCodeEditor.tsx. monaco-editor is already a
+# declared client dependency, so this copies what npm ci installed and downloads nothing.
+#
+# Must run AFTER `npm run build`: Workbox globs dist for every .js file during the build, so
+# copying earlier (or staging the files in client/public/) would precache most of a ~20 MB editor
+# payload into every visitor's service worker. Served lazily like this it only costs image size.
+# The candidate loop covers both npm layouts — hoisted to the workspace root, or installed
+# locally under client/ — and fails the build if neither exists.
+RUN set -eu; \
+    src=''; \
+    for d in node_modules/monaco-editor /app/node_modules/monaco-editor; do \
+      if [ -d "$d/min/vs" ]; then src="$d/min/vs"; break; fi; \
+    done; \
+    if [ -z "$src" ]; then echo 'monaco-editor/min/vs not found' >&2; exit 1; fi; \
+    mkdir -p dist/monaco; \
+    cp -R "$src" dist/monaco/vs; \
+    test -f dist/monaco/vs/loader.js
 
 # API setup (including client dist)
 FROM base-min AS api-build
