@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import debounce from 'lodash/debounce';
-import MonacoEditor from '@monaco-editor/react';
+import MonacoEditor, { loader } from '@monaco-editor/react';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import type { Artifact } from '~/common';
@@ -8,6 +8,29 @@ import { useMutationState, useCodeState } from '~/Providers/EditorContext';
 import { getResponseStatus } from '~/utils/errors';
 import { useArtifactsContext } from '~/Providers';
 import { useEditArtifact } from '~/data-provider';
+
+/**
+ * Serve Monaco from our own origin instead of jsDelivr.
+ *
+ * The `@monaco-editor/loader` package defaults to
+ * `https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs` and injects
+ * `<script src="…/loader.js">` when the editor first mounts. Our deployment sends
+ * `script-src 'self'` on the session-bearing origin, so that request is refused and the artifact
+ * code view never renders. Pointing `paths.vs` at our own copy fixes it with no CSP relaxation:
+ * same-origin scripts are covered by `'self'`, and Monaco spawns its language workers as plain
+ * same-origin Workers (`worker-src` falls back to `child-src` → `script-src`), so no `blob:`
+ * worker source is needed either. A CDN entry would have been strictly worse — it lets a
+ * third party execute JS inside the authenticated app.
+ *
+ * The payload is copied from `node_modules/monaco-editor/min/vs` into `client/dist/monaco/vs`
+ * in the `client-build` stage of Dockerfile.multi, deliberately *after* `npm run build`: Workbox
+ * globs dist for every `.js` file, so copying earlier (or into `client/public/`) would precache
+ * most of a ~20 MB editor payload into every visitor's service worker.
+ *
+ * Resolved against `document.baseURI` rather than hardcoded as `/monaco/vs` — index.html carries
+ * `<base href="/">`, which the server rewrites when DOMAIN_CLIENT deploys under a sub-directory.
+ */
+loader.config({ paths: { vs: new URL('monaco/vs', document.baseURI).href } });
 
 const LANG_MAP: Record<string, string> = {
   javascript: 'javascript',
